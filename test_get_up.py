@@ -48,7 +48,7 @@ class OnRemindTests(unittest.TestCase):
         self.assertFalse(app.enabled)
         self.assertEqual(app.title, "💤")
         app.remind_timer.stop.assert_called_once()
-        app.water_timer.stop.assert_called_once()
+        app.water_timer.stop.assert_not_called()
         self.assertTrue(app.menu_rebuilt)
 
 
@@ -71,6 +71,42 @@ class WaterRemindTests(unittest.TestCase):
         self.assertTrue(app.enabled)
         self.assertEqual(app.title, "🪑")
         self.assertGreater(app.water_start_time, old_water_start)
+
+    def test_notify_when_due_even_if_stand_reminder_paused(self):
+        app = DummyApp(interval_minutes=45, start_time=time.time(), enabled=False)
+        old_water_start = time.time() - 61 * 60
+        app.water_start_time = old_water_start
+        with mock.patch("get_up.send_notification") as notify:
+            GetUpApp._on_water_remind(app)
+        notify.assert_called_once()
+        self.assertGreater(app.water_start_time, old_water_start)
+
+
+class ToggleBehaviorTests(unittest.TestCase):
+    def test_pause_stand_reminder_does_not_stop_water_timer(self):
+        app = DummyApp(interval_minutes=45, start_time=time.time(), enabled=True)
+        app._reset_timer = mock.Mock()
+
+        with mock.patch("get_up.send_notification") as notify:
+            GetUpApp.toggle_enabled(app, None)
+
+        self.assertFalse(app.enabled)
+        app.remind_timer.stop.assert_called_once()
+        app.water_timer.stop.assert_not_called()
+        notify.assert_called_once()
+
+    def test_resume_stand_reminder_does_not_reset_water_timer(self):
+        app = DummyApp(interval_minutes=45, start_time=time.time(), enabled=False)
+        app._reset_timer = mock.Mock()
+        app._reset_water_timer = mock.Mock()
+
+        with mock.patch("get_up.send_notification") as notify:
+            GetUpApp.toggle_enabled(app, None)
+
+        self.assertTrue(app.enabled)
+        app._reset_timer.assert_called_once()
+        app._reset_water_timer.assert_not_called()
+        notify.assert_called_once()
 
 
 class TimerModeTests(unittest.TestCase):

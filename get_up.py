@@ -13,15 +13,18 @@ except Exception:  # pragma: no cover - pyobjc/rumps runtime dependency
     NSRunLoopCommonModes = None
 
 # 预设时间间隔（分钟）
-INTERVAL_OPTIONS = [20, 30, 45, 60, 90]
+STAND_INTERVAL_OPTIONS = [20, 30, 45, 60, 90]
 
 # 提醒站立时长（分钟）
 STAND_DURATION = 5
 
 # 喝水提醒间隔（分钟）
-WATER_INTERVAL_OPTIONS = [45, 60, 90, 120]
+WATER_INTERVAL_OPTIONS = [30, 45, 60, 90, 120]
 DEFAULT_WATER_INTERVAL_MINUTES = 60
-WATER_SIP_VOLUME_ML = 200
+DEFAULT_STAND_INTERVAL_MINUTES = 45
+
+# 参考 NASEM / Mayo 的成人每日总水分建议（包含食物+饮品）
+WATER_GUIDE_TEXT = "建议补水 150-250ml；成人日总水分参考：女 2.7L / 男 3.7L（含食物与饮品）"
 
 # rumps.Timer 在 start() 时会立即触发一次回调，留一点容差避免启动瞬间误触发提醒
 TIMER_EARLY_FIRE_TOLERANCE_SECONDS = 0.5
@@ -61,7 +64,7 @@ def enable_timer_common_modes(timer, run_loop=None, common_mode=NSRunLoopCommonM
 class GetUpApp(rumps.App):
     def __init__(self):
         super().__init__("🪑", quit_button=None)
-        self.interval_minutes = 45  # 默认 45 分钟
+        self.interval_minutes = DEFAULT_STAND_INTERVAL_MINUTES
         self.enabled = True
         self.start_time = time.time()
         self.water_enabled = True
@@ -93,34 +96,35 @@ class GetUpApp(rumps.App):
     def _build_menu(self):
         self.menu.clear()
 
-        # 开关
+        # 站立提醒开关
         toggle_title = (
-            "⏸ 暂停提醒（当前已开启）"
+            "⏸ 暂停站立提醒（当前已开启）"
             if self.enabled
-            else "▶️ 开始提醒（当前已暂停）"
+            else "▶️ 开始站立提醒（当前已暂停）"
         )
         self.menu.add(rumps.MenuItem(toggle_title, callback=self.toggle_enabled))
         self.menu.add(rumps.separator)
 
-        # 时间间隔子菜单
-        interval_menu = rumps.MenuItem("⏱ 提醒间隔")
-        for mins in INTERVAL_OPTIONS:
+        # 站立时间间隔子菜单
+        interval_menu = rumps.MenuItem("⏱ 站立提醒间隔")
+        for mins in STAND_INTERVAL_OPTIONS:
             label = f"{'✓ ' if mins == self.interval_minutes else '  '}{mins} 分钟"
             item = rumps.MenuItem(label, callback=self.set_interval)
             item._minutes = mins
             interval_menu.add(item)
-        custom_label = f"{'✓ ' if self.interval_minutes not in INTERVAL_OPTIONS else '  '}自定义..."
+        custom_label = f"{'✓ ' if self.interval_minutes not in STAND_INTERVAL_OPTIONS else '  '}自定义..."
         interval_menu.add(rumps.MenuItem(custom_label, callback=self.set_custom_interval))
         self.menu.add(interval_menu)
         self.menu.add(rumps.separator)
 
         # 喝水提醒开关
         water_toggle_title = (
-            "💧 关闭喝水提醒（当前已开启）"
+            "⏸ 暂停喝水提醒（当前已开启）"
             if self.water_enabled
-            else "💧 开启喝水提醒（当前已关闭）"
+            else "▶️ 开始喝水提醒（当前已暂停）"
         )
         self.menu.add(rumps.MenuItem(water_toggle_title, callback=self.toggle_water_enabled))
+        self.menu.add(rumps.separator)
 
         # 喝水时间间隔子菜单
         water_interval_menu = rumps.MenuItem("💧 喝水提醒间隔")
@@ -167,15 +171,15 @@ class GetUpApp(rumps.App):
     def _refresh_status(self):
         if not self.enabled:
             self.status_item.title = "⏸ 站立提醒已暂停"
-            self.water_status_item.title = "⏸ 喝水提醒已暂停"
-            return
-        elapsed = time.time() - self.start_time
-        remaining = max(0, self.interval_minutes * 60 - elapsed)
-        mins = int(remaining // 60)
-        secs = int(remaining % 60)
-        self.status_item.title = f"⏳ 距下次提醒：{mins:02d}:{secs:02d}"
+        else:
+            elapsed = time.time() - self.start_time
+            remaining = max(0, self.interval_minutes * 60 - elapsed)
+            mins = int(remaining // 60)
+            secs = int(remaining % 60)
+            self.status_item.title = f"⏳ 距下次站立提醒：{mins:02d}:{secs:02d}"
+
         if not self.water_enabled:
-            self.water_status_item.title = "💧 喝水提醒已关闭"
+            self.water_status_item.title = "⏸ 喝水提醒已暂停"
             return
         water_elapsed = time.time() - self.water_start_time
         water_remaining = max(0, self.water_interval_minutes * 60 - water_elapsed)
@@ -200,18 +204,17 @@ class GetUpApp(rumps.App):
         self.enabled = False
         self.title = "💤"
         self.remind_timer.stop()
-        self.water_timer.stop()
         self._build_menu()
 
     def _on_water_remind(self, _=None):
-        if not self.enabled or not self.water_enabled:
+        if not self.water_enabled:
             return
         elapsed = time.time() - self.water_start_time
         if not is_reminder_due(elapsed, self.water_interval_minutes):
             return
         send_notification(
             "💧 该喝水了！",
-            f"建议现在小口补水约 {WATER_SIP_VOLUME_ML} ml，分次喝更轻松。",
+            WATER_GUIDE_TEXT,
         )
         self.water_start_time = time.time()
 
@@ -239,21 +242,11 @@ class GetUpApp(rumps.App):
         if self.enabled:
             self.title = "🪑"
             self._reset_timer()
-            if self.water_enabled:
-                self._reset_water_timer()
-                send_notification(
-                    "起来站站",
-                    f"提醒已开启：站立每 {self.interval_minutes} 分钟，喝水每 {self.water_interval_minutes} 分钟",
-                )
-            else:
-                send_notification(
-                    "起来站站", f"提醒已开启，每 {self.interval_minutes} 分钟提醒站立一次"
-                )
+            send_notification("起来站站", f"站立提醒已开启，每 {self.interval_minutes} 分钟提醒一次")
         else:
             self.title = "💤"
             self.remind_timer.stop()
-            self.water_timer.stop()
-            send_notification("起来站站", "提醒已暂停")
+            send_notification("起来站站", "站立提醒已暂停")
         self._build_menu()
 
     def set_interval(self, sender):
@@ -261,7 +254,7 @@ class GetUpApp(rumps.App):
         if self.enabled:
             self._reset_timer()
         self._build_menu()
-        send_notification("起来站站", f"提醒间隔已设置为 {self.interval_minutes} 分钟")
+        send_notification("起来站站", f"站立提醒间隔已设置为 {self.interval_minutes} 分钟")
 
     def set_custom_interval(self, _):
         window = rumps.Window(
@@ -282,24 +275,23 @@ class GetUpApp(rumps.App):
                 if self.enabled:
                     self._reset_timer()
                 self._build_menu()
-                send_notification("起来站站", f"提醒间隔已设置为 {self.interval_minutes} 分钟")
+                send_notification("起来站站", f"站立提醒间隔已设置为 {self.interval_minutes} 分钟")
             except (ValueError, AttributeError):
                 rumps.alert("输入无效", "请输入大于 0 的整数")
 
     def toggle_water_enabled(self, _):
         self.water_enabled = not self.water_enabled
         if self.water_enabled:
-            if self.enabled:
-                self._reset_water_timer()
+            self._reset_water_timer()
             send_notification("起来站站", f"喝水提醒已开启，每 {self.water_interval_minutes} 分钟提醒一次")
         else:
             self.water_timer.stop()
-            send_notification("起来站站", "喝水提醒已关闭")
+            send_notification("起来站站", "喝水提醒已暂停")
         self._build_menu()
 
     def set_water_interval(self, sender):
         self.water_interval_minutes = sender._minutes
-        if self.enabled and self.water_enabled:
+        if self.water_enabled:
             self._reset_water_timer()
         self._build_menu()
         send_notification("起来站站", f"喝水提醒间隔已设置为 {self.water_interval_minutes} 分钟")
@@ -320,7 +312,7 @@ class GetUpApp(rumps.App):
                 if mins < 1:
                     raise ValueError
                 self.water_interval_minutes = mins
-                if self.enabled and self.water_enabled:
+                if self.water_enabled:
                     self._reset_water_timer()
                 self._build_menu()
                 send_notification(
@@ -340,12 +332,15 @@ class GetUpApp(rumps.App):
     def remind_water_now(self, _):
         send_notification(
             "💧 该喝水了！",
-            f"建议现在小口补水约 {WATER_SIP_VOLUME_ML} ml。",
+            WATER_GUIDE_TEXT,
         )
-        if self.enabled and self.water_enabled:
+        if self.water_enabled:
             self._reset_water_timer()
 
     def quit_app(self, _):
+        self.remind_timer.stop()
+        self.water_timer.stop()
+        self.ticker.stop()
         rumps.quit_application()
 
 
