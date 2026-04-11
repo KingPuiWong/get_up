@@ -13,6 +13,10 @@ class DummyApp:
         self.enabled = enabled
         self.title = "🪑"
         self.remind_timer = mock.Mock()
+        self.water_enabled = True
+        self.water_interval_minutes = 60
+        self.water_start_time = start_time
+        self.water_timer = mock.Mock()
         self.menu_rebuilt = False
 
     def _build_menu(self):
@@ -44,7 +48,29 @@ class OnRemindTests(unittest.TestCase):
         self.assertFalse(app.enabled)
         self.assertEqual(app.title, "💤")
         app.remind_timer.stop.assert_called_once()
+        app.water_timer.stop.assert_called_once()
         self.assertTrue(app.menu_rebuilt)
+
+
+class WaterRemindTests(unittest.TestCase):
+    def test_ignore_early_fire(self):
+        app = DummyApp(interval_minutes=45, start_time=time.time())
+        app.water_interval_minutes = 60
+        app.water_start_time = time.time()
+        with mock.patch("get_up.send_notification") as notify:
+            GetUpApp._on_water_remind(app)
+        notify.assert_not_called()
+
+    def test_notify_when_due_and_keep_app_running(self):
+        app = DummyApp(interval_minutes=45, start_time=time.time())
+        old_water_start = time.time() - 61 * 60
+        app.water_start_time = old_water_start
+        with mock.patch("get_up.send_notification") as notify:
+            GetUpApp._on_water_remind(app)
+        notify.assert_called_once()
+        self.assertTrue(app.enabled)
+        self.assertEqual(app.title, "🪑")
+        self.assertGreater(app.water_start_time, old_water_start)
 
 
 class TimerModeTests(unittest.TestCase):
