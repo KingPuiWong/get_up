@@ -1,4 +1,4 @@
 #!/bin/bash
-# 启动起来站站
+# Launch GetUp - native Swift menu bar app
 DIR="$(cd "$(dirname "$0")" && pwd)"
-python3 "$DIR/get_up.py"
+open "$DIR/dist/GetUp.app"

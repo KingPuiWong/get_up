@@ -1,38 +1,37 @@
-PYTHON ?= python3
-VENV_DIR ?= .venv
-VENV_PYTHON := $(VENV_DIR)/bin/python
-VENV_PIP := $(VENV_PYTHON) -m pip
+SWIFTC ?= swiftc
 APP_NAME ?= GetUp
+SOURCE_DIR := Sources/$(APP_NAME)
 DIST_DIR := dist
+APP_BUNDLE := $(DIST_DIR)/$(APP_NAME).app
+BINARY := $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 DMG_STAGING := $(DIST_DIR)/dmg
 DMG_PATH := $(DIST_DIR)/$(APP_NAME).dmg
 
-.PHONY: venv deps test app dmg clean
+.PHONY: build app dmg run clean
 
-venv:
-	@test -x "$(VENV_PYTHON)" || $(PYTHON) -m venv "$(VENV_DIR)"
+build: $(BINARY)
 
-deps: venv
-	$(VENV_PIP) install -r requirements-build.txt
+$(BINARY): $(SOURCE_DIR)/main.swift $(SOURCE_DIR)/AppDelegate.swift $(SOURCE_DIR)/Info.plist $(SOURCE_DIR)/icon.icns
+	@mkdir -p "$(APP_BUNDLE)/Contents/MacOS"
+	@mkdir -p "$(APP_BUNDLE)/Contents/Resources"
+	$(SWIFTC) -framework ServiceManagement -o "$(BINARY)" "$(SOURCE_DIR)/main.swift" "$(SOURCE_DIR)/AppDelegate.swift"
+	cp "$(SOURCE_DIR)/Info.plist" "$(APP_BUNDLE)/Contents/Info.plist"
+	cp "$(SOURCE_DIR)/icon.icns" "$(APP_BUNDLE)/Contents/Resources/icon.icns"
+	@echo "Built $(APP_BUNDLE)"
 
-test: deps
-	$(VENV_PYTHON) -m unittest -v
-
-app: clean test
-	$(VENV_PYTHON) setup.py py2app
+app: build
 
 dmg: app
 	rm -rf "$(DMG_STAGING)"
 	mkdir -p "$(DMG_STAGING)"
-	APP_PATH="$$(find "$(DIST_DIR)" -maxdepth 1 -name '*.app' -print -quit)"; \
-	if [ -z "$$APP_PATH" ]; then \
-		echo "No .app bundle found under $(DIST_DIR)."; \
-		exit 1; \
-	fi; \
-	cp -R "$$APP_PATH" "$(DMG_STAGING)/"
+	cp -R "$(APP_BUNDLE)" "$(DMG_STAGING)/"
 	ln -s /Applications "$(DMG_STAGING)/Applications"
 	hdiutil create -volname "$(APP_NAME)" -srcfolder "$(DMG_STAGING)" -ov -format UDZO "$(DMG_PATH)"
 	@echo "DMG created at $(DMG_PATH)"
 
+run: build
+	killall $(APP_NAME) 2>/dev/null || true
+	open "$(APP_BUNDLE)"
+
 clean:
-	rm -rf build dist *.egg-info
+	rm -rf "$(DIST_DIR)"
