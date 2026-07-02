@@ -9,7 +9,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let standIntervalOptions = [20, 30, 45, 60, 90]
     private let standDurationMinutes = 5
     private let defaultIntervalMinutes = 45
-    private let earlyFireToleranceSeconds = 0.5
+    private let earlyFireToleranceSeconds: TimeInterval = 30
 
     private enum Keys {
         static let intervalMinutes = "intervalMinutes"
@@ -34,7 +34,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         loadSettings()
 
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
+            if !granted {
+                DispatchQueue.main.async {
+                    self?.showNotificationPermissionDeniedAlert()
+                }
+            }
+        }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = enabled ? "🪑" : "💤"
@@ -191,17 +197,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Notification
 
     private func sendNotification(title: String, body: String) {
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        content.sound = .default
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            guard settings.authorizationStatus == .authorized else { return }
 
-        let request = UNNotificationRequest(
-            identifier: UUID().uuidString,
-            content: content,
-            trigger: nil
-        )
-        UNUserNotificationCenter.current().add(request)
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            content.sound = .default
+
+            let request = UNNotificationRequest(
+                identifier: UUID().uuidString,
+                content: content,
+                trigger: nil
+            )
+            UNUserNotificationCenter.current().add(request)
+        }
+    }
+
+    private func showNotificationPermissionDeniedAlert() {
+        let alert = NSAlert()
+        alert.messageText = "需要通知权限"
+        alert.informativeText = "请前往「系统设置 → 通知 → GetUp」开启通知权限，否则站立提醒将无法显示。"
+        alert.addButton(withTitle: "打开系统设置")
+        alert.addButton(withTitle: "稍后")
+        if alert.runModal() == .alertFirstButtonReturn {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
+                NSWorkspace.shared.open(url)
+            }
+        }
     }
 
     // MARK: Menu callbacks
@@ -261,11 +284,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func remindNow() {
-        sendNotification(
-            title: "⏰ 该站起来了！",
-            body: "请起来活动 \(standDurationMinutes) 分钟！"
-        )
-        if enabled { resetTimer() }
+        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+
+                if settings.authorizationStatus == .authorized {
+                    self.sendNotification(
+                        title: "⏰ 该站起来了！",
+                        body: "请起来活动 \(self.standDurationMinutes) 分钟！"
+                    )
+                } else {
+                    let alert = NSAlert()
+                    alert.messageText = "⏰ 该站起来了！"
+                    alert.informativeText = "请起来活动 \(self.standDurationMinutes) 分钟！"
+                    alert.addButton(withTitle: "知道了")
+                    alert.runModal()
+                }
+
+                if self.enabled { self.resetTimer() }
+            }
+        }
     }
 
     @objc private func toggleLoginItem() {
