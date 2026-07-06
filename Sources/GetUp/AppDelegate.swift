@@ -30,7 +30,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private var intervalMinutes = 45
     private var startTime = Date()
 
-    private var pendingReminderId: String?
+    private var remindTimer: Timer?
     private var ticker: Timer?
 
     // MARK: Dynamic menu items
@@ -170,30 +170,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
         guard enabled else { return }
 
-        let content = UNMutableNotificationContent()
-        content.title = "⏰ 该站起来了！"
-        content.body = "你已久坐 \(intervalMinutes) 分钟，请起来活动 \(standDurationMinutes) 分钟！"
-        content.sound = .default
-        content.categoryIdentifier = NotifCategory.standReminder
-
-        let trigger = UNTimeIntervalNotificationTrigger(
-            timeInterval: TimeInterval(intervalMinutes * 60),
-            repeats: false
-        )
-
-        let id = UUID().uuidString
-        pendingReminderId = id
-        let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
-        UNUserNotificationCenter.current().add(request)
+        let delay = TimeInterval(intervalMinutes * 60)
+        remindTimer = makeCommonModesTimer(interval: delay, repeats: false) { [weak self] _ in
+            self?.onRemind()
+        }
     }
 
     private func stopAllTimers() {
         ticker?.invalidate()
         ticker = nil
-        if let id = pendingReminderId {
-            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [id])
-            pendingReminderId = nil
-        }
+        remindTimer?.invalidate()
+        remindTimer = nil
     }
 
     private func startTicker() {
@@ -216,31 +203,30 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         startTimers()
     }
 
-    private func onRemind() {
-        guard enabled else { return }
-
+    private func performReminder() {
         enabled = false
-        pendingReminderId = nil
         statusItem.button?.title = "💤"
         stopAllTimers()
         startTicker()
         buildMenu()
+        sendNotification(
+            title: "⏰ 该站起来了！",
+            body: "你已久坐 \(intervalMinutes) 分钟，请起来活动 \(standDurationMinutes) 分钟！",
+            categoryIdentifier: NotifCategory.standReminder
+        )
+    }
+
+    private func onRemind() {
+        guard enabled else { return }
+        performReminder()
     }
 
     private func snoozeReminder() {
-        let snoozeSeconds: TimeInterval = 5 * 60
-        let content = UNMutableNotificationContent()
-        content.title = "⏰ 该站起来了！"
-        content.body = "你已久坐 \(intervalMinutes) 分钟，请起来活动 \(standDurationMinutes) 分钟！"
-        content.sound = .default
-        content.categoryIdentifier = NotifCategory.standReminder
-
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: snoozeSeconds, repeats: false)
-        let id = UUID().uuidString
-        pendingReminderId = id
-        let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
-        UNUserNotificationCenter.current().add(request)
-
+        remindTimer?.invalidate()
+        remindTimer = makeCommonModesTimer(interval: 5 * 60, repeats: false) { [weak self] _ in
+            self?.performReminder()
+        }
+        startTicker()
         buildMenu()
     }
 
@@ -274,7 +260,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        if notification.request.content.categoryIdentifier == NotifCategory.standReminder {
+        if notification.request.content.categoryIdentifier == NotifCategory.standReminder, enabled {
             onRemind()
         }
         completionHandler([.banner, .sound])
@@ -372,8 +358,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
                 if settings.authorizationStatus == .authorized {
                     self.sendNotification(
                         title: "⏰ 该站起来了！",
-                        body: "请起来活动 \(self.standDurationMinutes) 分钟！",
-                        categoryIdentifier: NotifCategory.standReminder
+                        body: "请起来活动 \(self.standDurationMinutes) 分钟！"
                     )
                 } else {
                     let alert = NSAlert()
