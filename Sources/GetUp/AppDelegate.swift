@@ -21,6 +21,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     private enum Keys {
         static let intervalMinutes = "intervalMinutes"
+        static let hasShownPermissionAlert = "hasShownPermissionAlert"
     }
 
     // MARK: State
@@ -32,6 +33,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     private var remindTimer: Timer?
     private var ticker: Timer?
+    private var reminderPanel: ReminderPanel?
 
     // MARK: Dynamic menu items
 
@@ -45,7 +47,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
             if !granted {
                 DispatchQueue.main.async {
-                    self?.showNotificationPermissionDeniedAlert()
+                    let alreadyShown = UserDefaults.standard.bool(forKey: Keys.hasShownPermissionAlert)
+                    if !alreadyShown {
+                        UserDefaults.standard.set(true, forKey: Keys.hasShownPermissionAlert)
+                        self?.showNotificationPermissionDeniedAlert()
+                    }
                 }
             }
         }
@@ -209,11 +215,36 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         stopAllTimers()
         startTicker()
         buildMenu()
+
+        // --- 浮动强提醒面板（置顶，手动关闭才消失）---
+        showReminderPanel()
+
+        // 系统通知作为后备（切换桌面/DND 时也能收到）
         sendNotification(
             title: "⏰ 该站起来了！",
             body: "你已久坐 \(intervalMinutes) 分钟，请起来活动 \(standDurationMinutes) 分钟！",
             categoryIdentifier: NotifCategory.standReminder
         )
+    }
+
+    private func showReminderPanel() {
+        // 如果已有面板在显示，先关掉
+        reminderPanel?.close()
+
+        let panel = ReminderPanel(intervalMinutes: intervalMinutes, standDurationMinutes: standDurationMinutes)
+        panel.onDismiss = { [weak self] in
+            self?.reminderPanel = nil
+            // 点击"知道了" → 保持暂停状态，用户手动重新开启
+            self?.buildMenu()
+        }
+        panel.onSnooze = { [weak self] in
+            self?.reminderPanel = nil
+            self?.snoozeReminder()
+        }
+
+        reminderPanel = panel
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func onRemind() {
@@ -351,26 +382,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         sendNotification(title: "起来站站", body: "站立提醒间隔已设置为 \(intervalMinutes) 分钟")
     }
     @objc private func remindNow() {
-        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
+        // 直接显示浮动面板 — 不依赖系统通知权限
+        enabled = false
+        statusItem.button?.title = "💤"
+        stopAllTimers()
+        startTicker()
+        buildMenu()
 
-                if settings.authorizationStatus == .authorized {
-                    self.sendNotification(
-                        title: "⏰ 该站起来了！",
-                        body: "请起来活动 \(self.standDurationMinutes) 分钟！"
-                    )
-                } else {
-                    let alert = NSAlert()
-                    alert.messageText = "⏰ 该站起来了！"
-                    alert.informativeText = "请起来活动 \(self.standDurationMinutes) 分钟！"
-                    alert.addButton(withTitle: "知道了")
-                    alert.runModal()
-                }
-
-                if self.enabled { self.resetTimer() }
-            }
+        let panel = ReminderPanel(intervalMinutes: intervalMinutes, standDurationMinutes: standDurationMinutes)
+        panel.onDismiss = { [weak self] in
+            self?.reminderPanel = nil
+            // 点击"知道了" → 保持暂停，用户手动重新开启
+            self?.buildMenu()
         }
+        panel.onSnooze = { [weak self] in
+            self?.reminderPanel = nil
+            self?.snoozeReminder()
+        }
+
+        reminderPanel = panel
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+
+        // 系统通知作为后备
+        sendNotification(
+            title: "⏰ 该站起来了！",
+            body: "请起来活动 \(standDurationMinutes) 分钟！"
+        )
     }
 
     @objc private func toggleLoginItem() {

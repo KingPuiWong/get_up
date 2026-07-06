@@ -11,10 +11,10 @@ DMG_PATH := $(DIST_DIR)/$(APP_NAME).dmg
 
 build: $(BINARY)
 
-$(BINARY): $(SOURCE_DIR)/main.swift $(SOURCE_DIR)/AppDelegate.swift $(SOURCE_DIR)/Info.plist $(SOURCE_DIR)/icon.icns
+$(BINARY): $(SOURCE_DIR)/main.swift $(SOURCE_DIR)/AppDelegate.swift $(SOURCE_DIR)/ReminderPanel.swift $(SOURCE_DIR)/Info.plist $(SOURCE_DIR)/icon.icns
 	@mkdir -p "$(APP_BUNDLE)/Contents/MacOS"
 	@mkdir -p "$(APP_BUNDLE)/Contents/Resources"
-	$(SWIFTC) -framework ServiceManagement -o "$(BINARY)" "$(SOURCE_DIR)/main.swift" "$(SOURCE_DIR)/AppDelegate.swift"
+	$(SWIFTC) -framework ServiceManagement -o "$(BINARY)" "$(SOURCE_DIR)/main.swift" "$(SOURCE_DIR)/AppDelegate.swift" "$(SOURCE_DIR)/ReminderPanel.swift"
 	cp "$(SOURCE_DIR)/Info.plist" "$(APP_BUNDLE)/Contents/Info.plist"
 	cp "$(SOURCE_DIR)/icon.icns" "$(APP_BUNDLE)/Contents/Resources/icon.icns"
 	@echo "Built $(APP_BUNDLE)"
